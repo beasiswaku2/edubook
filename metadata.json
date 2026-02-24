@@ -1,0 +1,8 @@
+{
+  "name": "Edubook AI",
+  "description": "A production-ready educational platform with AI chat, referral system, and quota management.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
