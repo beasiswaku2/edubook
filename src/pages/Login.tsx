@@ -32,13 +32,22 @@ export default function Login({ onLogin }: { onLogin: (user: any) => void }) {
         });
       } else if (data.unverified) {
         Swal.fire({
-          title: 'Akun Belum Diverifikasi',
-          text: 'Silakan verifikasi akun Anda terlebih dahulu.',
+          title: 'Akun Belum Aktif',
+          html: `
+            <div class="space-y-3">
+              <p class="text-gray-600">Akun Anda sedang menunggu verifikasi dari Admin.</p>
+              <p class="text-sm text-gray-500">Silakan hubungi Admin untuk mempercepat proses verifikasi.</p>
+              <a href="https://api.whatsapp.com/send/?phone=6287788526410&text=Halo+Admin%2C+akun+saya+dengan+email+${email}+belum+aktif.+Mohon+bantuannya+untuk+verifikasi." 
+                 target="_blank" 
+                 class="inline-flex items-center gap-2 px-4 py-2 bg-emerald-500 text-white rounded-lg font-bold hover:bg-emerald-600 transition-all mt-2">
+                Hubungi Admin
+              </a>
+            </div>
+          `,
           icon: 'warning',
-          confirmButtonText: 'Verifikasi Sekarang',
+          showConfirmButton: true,
+          confirmButtonText: 'Tutup',
           confirmButtonColor: '#10b981'
-        }).then(() => {
-          navigate(`/verify?email=${email}`);
         });
       } else {
         Swal.fire('Gagal', data.message, 'error');

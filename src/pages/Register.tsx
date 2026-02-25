@@ -1,7 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { GraduationCap, Mail, Lock, User, Phone, Tag, ArrowRight } from 'lucide-react';
+import { GraduationCap, Mail, Lock, User, Phone, Tag, ArrowRight, Copy } from 'lucide-react';
 import Swal from 'sweetalert2';
+import withReactContent from 'sweetalert2-react-content';
+
+const MySwal = withReactContent(Swal);
 
 export default function Register() {
   const navigate = useNavigate();
@@ -24,27 +27,67 @@ export default function Register() {
   }, [searchParams]);
   const [loading, setLoading] = useState(false);
 
+  const handleCopy = (text: string) => {
+    navigator.clipboard.writeText(text);
+    Swal.fire({
+      title: 'Tersalin!',
+      text: 'Kode verifikasi telah disalin ke clipboard.',
+      icon: 'success',
+      timer: 1500,
+      showConfirmButton: false
+    });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+
+    // Format WhatsApp number: 08... -> 628...
+    let formattedWA = formData.whatsapp.replace(/[^0-9]/g, '');
+    if (formattedWA.startsWith('0')) {
+      formattedWA = '62' + formattedWA.slice(1);
+    } else if (formattedWA.startsWith('8')) {
+      formattedWA = '62' + formattedWA;
+    }
 
     try {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify({ ...formData, whatsapp: formattedWA })
       });
       const data = await res.json();
 
       if (data.success) {
-        Swal.fire({
-          title: 'Pendaftaran Berhasil!',
-          text: `Kode verifikasi Anda adalah: ${data.otp}. Silakan masukkan di halaman berikutnya.`,
+        MySwal.fire({
+          title: <span className="text-emerald-600">Pendaftaran Berhasil!</span>,
+          html: (
+            <div className="space-y-4 py-2 text-center">
+              <p className="text-gray-600">Terima kasih telah mendaftar di <strong>EduBook AI</strong>.</p>
+              <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100">
+                <p className="text-sm text-emerald-800 font-medium">
+                  Akun Anda sedang dalam proses verifikasi oleh Admin.
+                </p>
+                <p className="text-xs text-emerald-600 mt-2">
+                  Silakan tunggu konfirmasi selanjutnya atau hubungi Admin melalui WhatsApp.
+                </p>
+              </div>
+              <a 
+                href="https://api.whatsapp.com/send/?phone=6287788526410&text=Halo+Admin%2C+saya+baru+saja+mendaftar+di+EduBook+AI+dan+sedang+menunggu+verifikasi+akun."
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-2 px-6 py-3 bg-emerald-500 text-white rounded-xl font-bold hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-100"
+              >
+                <Phone className="w-4 h-4" />
+                Hubungi Admin
+              </a>
+            </div>
+          ),
           icon: 'success',
-          confirmButtonText: 'Verifikasi Sekarang',
+          confirmButtonText: 'Kembali ke Login',
           confirmButtonColor: '#10b981'
         }).then(() => {
-          navigate(`/verify?email=${formData.email}`);
+          navigate('/login');
         });
       } else {
         Swal.fire('Gagal', data.message, 'error');

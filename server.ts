@@ -4,6 +4,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import { sendVerificationEmail } from './src/services/emailService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,7 +29,18 @@ db.exec(`
     role TEXT DEFAULT 'user',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  );
 `);
+
+// Initialize default settings
+const initSettings = db.prepare('SELECT COUNT(*) as count FROM settings').get() as any;
+if (initSettings.count === 0) {
+  db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run('ai_provider', 'gemini');
+}
 
 // Migration: Add missing columns if table already exists
 const tableInfo = db.prepare("PRAGMA table_info(users)").all() as any[];
@@ -125,9 +137,45 @@ async function startServer() {
     next();
   });
 
+  // Settings APIs
+  app.get('/api/admin/settings', (req, res) => {
+    try {
+      const settings = db.prepare('SELECT * FROM settings').all() as any[];
+      const settingsMap = settings.reduce((acc, curr) => {
+        acc[curr.key] = curr.value;
+        return acc;
+      }, {});
+      res.json(settingsMap);
+    } catch (error: any) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  app.post('/api/admin/settings', (req, res) => {
+    const { settings } = req.body; // Object with key-value pairs
+    try {
+      const upsert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+      for (const [key, value] of Object.entries(settings)) {
+        upsert.run(key, value);
+      }
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
   // Auth APIs
-  app.post('/api/auth/register', (req, res) => {
-    const { name, email, whatsapp, password, referralCode } = req.body;
+  app.post('/api/auth/register', async (req, res) => {
+    let { name, email, whatsapp, password, referralCode } = req.body;
+    
+    // Standardize WhatsApp to 62...
+    whatsapp = whatsapp.replace(/[^0-9]/g, '');
+    if (whatsapp.startsWith('0')) {
+      whatsapp = '62' + whatsapp.slice(1);
+    } else if (whatsapp.startsWith('8')) {
+      whatsapp = '62' + whatsapp;
+    }
+
     const newReferralCode = Math.random().toString(36).substring(2, 8).toUpperCase();
     const otp = Math.floor(100000 + Math.random() * 900000).toString(); // 6 digit OTP
     
@@ -135,14 +183,23 @@ async function startServer() {
       const expiryDate = new Date();
       expiryDate.setDate(expiryDate.getDate() + 7); // 7 days trial
 
-      const result = db.prepare(`
+      db.prepare(`
         INSERT INTO users (name, email, whatsapp, password, referral_code, referred_by, quota_balance, quota_expiry, verification_code)
         VALUES (?, ?, ?, ?, ?, ?, 20, ?, ?)
       `).run(name, email, whatsapp, password, newReferralCode, referralCode || null, expiryDate.toISOString(), otp);
       
-      // In a real app, you'd send this via WhatsApp/Email. 
-      // For this demo, we return it so the user can "see" it.
-      res.json({ success: true, message: 'Kode verifikasi telah dikirim', otp });
+      // Send real email
+      const emailSent = await sendVerificationEmail(email, otp);
+      
+      if (emailSent) {
+        res.json({ success: true, message: 'Pendaftaran berhasil, silakan tunggu verifikasi admin.' });
+      } else {
+        // Even if email fails, we return success as requested
+        res.json({ 
+          success: true, 
+          message: 'Pendaftaran berhasil, silakan tunggu verifikasi admin.'
+        });
+      }
     } catch (error: any) {
       res.status(400).json({ success: false, message: error.message });
     }
@@ -300,7 +357,7 @@ async function startServer() {
 
   app.get('/api/admin/pending-transactions', (req, res) => {
     const transactions = db.prepare(`
-      SELECT t.*, u.name as user_name, u.email as user_email 
+      SELECT t.*, u.name as user_name, u.email as user_email, u.whatsapp, u.referral_code, u.verification_code
       FROM transactions t 
       JOIN users u ON t.user_id = u.id 
       WHERE t.status = 'pending'
@@ -357,10 +414,25 @@ async function startServer() {
   });
 
   app.post('/api/admin/update-user', (req, res) => {
-    const { userId, quota_balance, bonus_balance, role, is_verified } = req.body;
+    let { userId, quota_balance, bonus_balance, role, is_verified, whatsapp } = req.body;
+    
+    if (whatsapp) {
+      whatsapp = whatsapp.replace(/[^0-9]/g, '');
+      if (whatsapp.startsWith('0')) {
+        whatsapp = '62' + whatsapp.slice(1);
+      } else if (whatsapp.startsWith('8')) {
+        whatsapp = '62' + whatsapp;
+      }
+    }
+
     try {
-      db.prepare('UPDATE users SET quota_balance = ?, bonus_balance = ?, role = ?, is_verified = ? WHERE id = ?')
-        .run(quota_balance, bonus_balance, role, is_verified, userId);
+      if (whatsapp) {
+        db.prepare('UPDATE users SET quota_balance = ?, bonus_balance = ?, role = ?, is_verified = ?, whatsapp = ? WHERE id = ?')
+          .run(quota_balance, bonus_balance, role, is_verified, whatsapp, userId);
+      } else {
+        db.prepare('UPDATE users SET quota_balance = ?, bonus_balance = ?, role = ?, is_verified = ? WHERE id = ?')
+          .run(quota_balance, bonus_balance, role, is_verified, userId);
+      }
       res.json({ success: true });
     } catch (error: any) {
       res.status(400).json({ success: false, message: error.message });
@@ -408,7 +480,7 @@ async function startServer() {
 
   app.get('/api/admin/all-transactions', (req, res) => {
     const transactions = db.prepare(`
-      SELECT t.*, u.name as user_name, u.email as user_email 
+      SELECT t.*, u.name as user_name, u.email as user_email, u.whatsapp, u.referral_code, u.verification_code
       FROM transactions t 
       JOIN users u ON t.user_id = u.id 
       ORDER BY t.created_at DESC

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, Paperclip, Camera, Volume2, Bot, User, Sparkles, LogOut } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { getGeminiResponse } from '../services/gemini';
+import { getAIResponse } from '../services/aiService';
 import Swal from 'sweetalert2';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -77,7 +77,7 @@ export default function ChatAI({ user, onUpdateUser }: { user: any, onUpdateUser
         parts: [{ text: m.content }]
       }));
       
-      const aiResponse = await getGeminiResponse(input, history);
+      const aiResponse = await getAIResponse(input, history);
       
       const aiMsg = { userId: user.id, role: 'model', content: aiResponse };
       

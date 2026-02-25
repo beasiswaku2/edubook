@@ -1,9 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, Users, Banknote, Clock, Check, X, Eye, Trash2, Edit2, Search, TrendingUp, LogOut, Loader2, Megaphone, Plus } from 'lucide-react';
+import { ShieldCheck, Users, Banknote, Clock, Check, X, Eye, Trash2, Edit2, Search, TrendingUp, LogOut, Loader2, Megaphone, Plus, MessageCircle, Key, Settings, Sparkles, Bot } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
 import Swal from 'sweetalert2';
 
-type Tab = 'dashboard' | 'users' | 'transactions' | 'promos' | 'withdrawals';
+declare global {
+  interface Window {
+    aistudio: {
+      hasSelectedApiKey: () => Promise<boolean>;
+      openSelectKey: () => Promise<void>;
+    };
+  }
+}
+
+type Tab = 'dashboard' | 'users' | 'transactions' | 'promos' | 'withdrawals' | 'settings';
 
 export default function AdminPanel({ onLogout }: { onLogout?: () => void }) {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
@@ -16,10 +25,31 @@ export default function AdminPanel({ onLogout }: { onLogout?: () => void }) {
   const [chartData, setChartData] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  const [clickedWA, setClickedWA] = useState<Set<string>>(new Set());
+  const [aiSettings, setAiSettings] = useState<any>({});
 
   useEffect(() => {
     fetchData();
   }, [activeTab]);
+
+  const handleUpdateApiKey = async () => {
+    try {
+      if (window.aistudio) {
+        await window.aistudio.openSelectKey();
+        Swal.fire({
+          title: 'API Key Diperbarui',
+          text: 'Kunci API Gemini telah berhasil diperbarui.',
+          icon: 'success',
+          timer: 2000,
+          showConfirmButton: false
+        });
+      } else {
+        Swal.fire('Info', 'Fitur ganti API Key hanya tersedia di lingkungan AI Studio.', 'info');
+      }
+    } catch (error) {
+      console.error("Failed to open key selector:", error);
+    }
+  };
 
   const fetchData = async () => {
     setLoading(true);
@@ -45,11 +75,30 @@ export default function AdminPanel({ onLogout }: { onLogout?: () => void }) {
       } else if (activeTab === 'withdrawals') {
         const res = await fetch('/api/admin/withdrawals');
         setAllWithdrawals(await res.json());
+      } else if (activeTab === 'settings') {
+        const res = await fetch('/api/admin/settings');
+        setAiSettings(await res.json());
       }
     } catch (error) {
       console.error("Failed to fetch admin data:", error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSaveSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('/api/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ settings: aiSettings })
+      });
+      if (res.ok) {
+        Swal.fire('Berhasil!', 'Pengaturan telah disimpan.', 'success');
+      }
+    } catch (error) {
+      Swal.fire('Error', 'Gagal menyimpan pengaturan', 'error');
     }
   };
 
@@ -78,6 +127,44 @@ export default function AdminPanel({ onLogout }: { onLogout?: () => void }) {
         Swal.fire('Error', 'Gagal konfirmasi', 'error');
       }
     }
+  };
+
+  const handleSendWA = (user: any, type: 'verify' | 'welcome', transaction?: any) => {
+    const baseUrl = window.location.origin;
+    const referralLink = `${baseUrl}/register?ref=${user.referral_code}`;
+    let waNumber = user.whatsapp ? user.whatsapp.replace(/[^0-9]/g, '') : '';
+    
+    // Standardize to international format (62...)
+    if (waNumber.startsWith('0')) {
+      waNumber = '62' + waNumber.slice(1);
+    } else if (waNumber.startsWith('8')) {
+      waNumber = '62' + waNumber;
+    }
+    
+    if (!waNumber) {
+      Swal.fire('Gagal', 'Nomor WhatsApp tidak ditemukan', 'error');
+      return;
+    }
+
+    let message = "";
+    if (type === 'verify') {
+      message = `Halo *${user.name}*! 👋\n\nSelamat bergabung di *EduBook AI*. Akun Anda telah terdaftar dan sedang dalam proses verifikasi oleh Admin.\n\nWebsite: ${baseUrl}\nLink Referal Anda: ${referralLink}\n\nSelamat belajar! 🚀`;
+    } else {
+      message = `Halo *${user.name}*! 👋\n\nSelamat bergabung di *EduBook AI*! Pembayaran Anda untuk paket *${transaction?.package_name || 'Kuota'}* telah kami konfirmasi dan akun Anda telah aktif.\n\nBerikut detail akun Anda:\n• Nama: ${user.name}\n• Paket: ${transaction?.package_name}\n• Website: ${baseUrl}\n• Link Referal: ${referralLink}\n\nSelamat belajar! 🚀`;
+    }
+
+    const encodedMessage = encodeURIComponent(message);
+    // Use the format requested by user but with fixed number
+    const whatsappUrl = `https://api.whatsapp.com/send/?phone=${waNumber}&text=${encodedMessage}&type=phone_number&app_absent=0`;
+    
+    window.open(whatsappUrl, '_blank');
+    
+    const key = `${user.id}-${type}-${transaction?.id || 0}`;
+    setClickedWA(prev => {
+      const next = new Set(prev);
+      next.add(key);
+      return next;
+    });
   };
 
   const handleReject = async (id: number) => {
@@ -161,6 +248,10 @@ export default function AdminPanel({ onLogout }: { onLogout?: () => void }) {
               <option value="0" ${!user.is_verified ? 'selected' : ''}>Unverified</option>
             </select>
           </div>
+          <div>
+            <label class="block text-xs font-bold text-gray-400 uppercase mb-1">WhatsApp</label>
+            <input id="swal-whatsapp" type="text" class="w-full px-4 py-2 border rounded-xl" value="${user.whatsapp || ''}">
+          </div>
         </div>`,
       focusConfirm: false,
       showCancelButton: true,
@@ -171,7 +262,8 @@ export default function AdminPanel({ onLogout }: { onLogout?: () => void }) {
           quota_balance: (document.getElementById('swal-quota') as HTMLInputElement).value,
           bonus_balance: (document.getElementById('swal-bonus') as HTMLInputElement).value,
           role: (document.getElementById('swal-role') as HTMLSelectElement).value,
-          is_verified: (document.getElementById('swal-verified') as HTMLSelectElement).value
+          is_verified: (document.getElementById('swal-verified') as HTMLSelectElement).value,
+          whatsapp: (document.getElementById('swal-whatsapp') as HTMLInputElement).value
         }
       }
     });
@@ -395,10 +487,18 @@ export default function AdminPanel({ onLogout }: { onLogout?: () => void }) {
               <LogOut className="w-5 h-5" />
             </button>
           )}
+          <button 
+            onClick={handleUpdateApiKey}
+            className="p-3 bg-indigo-50 text-indigo-600 rounded-xl hover:bg-indigo-100 transition-all flex items-center gap-2"
+            title="Ganti API Key Gemini"
+          >
+            <Key className="w-5 h-5" />
+            <span className="hidden md:inline text-sm font-bold">API Key</span>
+          </button>
         </div>
 
         <div className="flex bg-gray-100 p-1 rounded-2xl overflow-x-auto">
-          {(['dashboard', 'users', 'transactions', 'promos', 'withdrawals'] as Tab[]).map((tab) => (
+          {(['dashboard', 'users', 'transactions', 'promos', 'withdrawals', 'settings'] as Tab[]).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -599,6 +699,18 @@ export default function AdminPanel({ onLogout }: { onLogout?: () => void }) {
                       <td className="px-8 py-5">
                         <div className="flex items-center gap-2">
                           <button 
+                            onClick={() => handleSendWA(u, 'verify')}
+                            className={`p-2.5 rounded-xl transition-all flex items-center gap-2 text-xs font-bold ${
+                              clickedWA.has(`${u.id}-verify-0`)
+                                ? 'bg-emerald-500 text-white'
+                                : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
+                            }`}
+                            title="Kirim Kode via WA"
+                          >
+                            <MessageCircle className="w-4 h-4" />
+                            {u.is_verified ? 'Welcome' : 'Kirim OTP'}
+                          </button>
+                          <button 
                             onClick={() => handleEditUser(u)}
                             className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-indigo-50 hover:text-indigo-600 transition-all"
                           >
@@ -671,6 +783,26 @@ export default function AdminPanel({ onLogout }: { onLogout?: () => void }) {
                       </td>
                       <td className="px-8 py-5">
                         <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => {
+                              const user = { 
+                                id: t.user_id, 
+                                name: t.user_name, 
+                                whatsapp: t.whatsapp || '', 
+                                referral_code: t.referral_code || '',
+                                verification_code: t.verification_code || ''
+                              };
+                              handleSendWA(user, 'welcome', t);
+                            }}
+                            className={`p-2.5 rounded-xl transition-all ${
+                              clickedWA.has(`${t.user_id}-welcome-${t.id}`)
+                                ? 'bg-emerald-500 text-white'
+                                : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
+                            }`}
+                            title="Kirim Bukti Konfirmasi via WA"
+                          >
+                            <MessageCircle className="w-4 h-4" />
+                          </button>
                           {t.proof_image && (
                             <button 
                               onClick={() => showProof(t.proof_image)}
@@ -702,6 +834,82 @@ export default function AdminPanel({ onLogout }: { onLogout?: () => void }) {
                 </tbody>
               </table>
             </div>
+          </div>
+        </div>
+      )}
+
+      {!loading && activeTab === 'settings' && (
+        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="bg-white rounded-[2.5rem] border border-gray-100 shadow-sm p-8">
+            <h3 className="text-xl font-black text-gray-900 flex items-center gap-2 mb-8">
+              <Settings className="text-indigo-600 w-6 h-6" />
+              Pengaturan AI (Gemini / Groq)
+            </h3>
+            
+            <form onSubmit={handleSaveSettings} className="space-y-8 max-w-2xl">
+              <div className="space-y-4">
+                <label className="block text-sm font-bold text-gray-700">Pilih Provider AI</label>
+                <div className="grid grid-cols-2 gap-4">
+                  <button
+                    type="button"
+                    onClick={() => setAiSettings({ ...aiSettings, ai_provider: 'gemini' })}
+                    className={`p-6 rounded-3xl border-2 transition-all text-left flex flex-col gap-2 ${
+                      aiSettings.ai_provider === 'gemini' 
+                        ? 'border-indigo-600 bg-indigo-50/50' 
+                        : 'border-gray-100 hover:border-gray-200'
+                    }`}
+                  >
+                    <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-100">
+                      <Sparkles className="text-white w-6 h-6" />
+                    </div>
+                    <span className="font-black text-gray-900">Google Gemini</span>
+                    <span className="text-xs text-gray-500">Model: Gemini 3 Flash</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setAiSettings({ ...aiSettings, ai_provider: 'groq' })}
+                    className={`p-6 rounded-3xl border-2 transition-all text-left flex flex-col gap-2 ${
+                      aiSettings.ai_provider === 'groq' 
+                        ? 'border-emerald-600 bg-emerald-50/50' 
+                        : 'border-gray-100 hover:border-gray-200'
+                    }`}
+                  >
+                    <div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center shadow-lg shadow-emerald-100">
+                      <Bot className="text-white w-6 h-6" />
+                    </div>
+                    <span className="font-black text-gray-900">Groq Cloud</span>
+                    <span className="text-xs text-gray-500">Model: Llama 3.3 70B</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <div className="space-y-2">
+                  <label className="block text-xs font-black text-gray-400 uppercase tracking-widest">Groq API Key</label>
+                  <div className="relative">
+                    <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <input
+                      type="password"
+                      value={aiSettings.groq_api_key || ''}
+                      onChange={(e) => setAiSettings({ ...aiSettings, groq_api_key: e.target.value })}
+                      className="w-full pl-12 pr-4 py-4 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-indigo-500 transition-all text-sm"
+                      placeholder="gsk_..."
+                    />
+                  </div>
+                  <p className="text-[10px] text-gray-400 italic">
+                    * Jika dikosongkan, sistem akan menggunakan kunci dari environment variable.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                className="px-8 py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-xl shadow-indigo-100 hover:bg-indigo-700 hover:-translate-y-0.5 transition-all"
+              >
+                Simpan Pengaturan
+              </button>
+            </form>
           </div>
         </div>
       )}
